@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title></title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: grab;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    body:active {
+      cursor: grabbing;
+    }
+    canvas {
+      display: block;
+      width: auto;
+      height: 100vh;
+      max-width: 100vw;
+      max-height: 100vh;
+      aspect-ratio: 1078 / 1774;
+      object-fit: contain;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="stage" width="1078" height="1774"></canvas>
+  <script>
+    (function () {
+      const TOTAL_FRAMES = 240;
+      const FADE_FRAMES = 14;
+      const BASE_SPEED = 0.45;
+      const LERP_FACTOR = 0.08;
+      const SCROLL_SENSITIVITY = 0.22;
+      const TOUCH_SENSITIVITY = 0.32;
+      const DRAG_SENSITIVITY = 0.28;
+
+      const canvas = document.getElementById('stage');
+      const ctx = canvas.getContext('2d', { alpha: false });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+
+      const pad = (num) => String(num).padStart(3, '0');
+      const getFrameSrc = (index) => `ezgif-frame-${pad(index)}.jpg`;
+
+      const images = new Array(TOTAL_FRAMES);
+      const loadedFrames = new Set();
+
+      let targetPosition = 0;
+      let currentPosition = 0;
+
+      let isDragging = false;
+      let lastDragY = 0;
+      let lastDragTime = 0;
+      let dragVelocity = 0;
+
+      let isTouching = false;
+      let lastTouchY = 0;
+      let lastTouchTime = 0;
+      let touchVelocity = 0;
+
+      function getNearestLoadedImage(idx) {
+        if (loadedFrames.has(idx) && images[idx] && images[idx].complete && images[idx].naturalWidth > 0) {
+          return images[idx];
+        }
+        let bestImg = null;
+        let minDiff = Infinity;
+        for (const loadedIdx of loadedFrames) {
+          const directDiff = Math.abs(loadedIdx - idx);
+          const wrapDiff = TOTAL_FRAMES - directDiff;
+          const diff = Math.min(directDiff, wrapDiff);
+          if (diff < minDiff) {
+            minDiff = diff;
+            bestImg = images[loadedIdx];
+          }
+        }
+        return bestImg;
+      }
+
+      function draw(normPos) {
+        const currentIdx = Math.floor(normPos) % TOTAL_FRAMES;
+        const imgCurrent = getNearestLoadedImage(currentIdx);
+
+        if (!imgCurrent) return;
+
+        const w = canvas.width;
+        const h = canvas.height;
+
+        ctx.globalAlpha = 1.0;
+        ctx.drawImage(imgCurrent, 0, 0, w, h);
+
+        if (normPos >= TOTAL_FRAMES - FADE_FRAMES) {
+          const rawAlpha = (normPos - (TOTAL_FRAMES - FADE_FRAMES)) / FADE_FRAMES;
+          const easeAlpha = rawAlpha * rawAlpha * (3 - 2 * rawAlpha);
+          const imgLoop = getNearestLoadedImage(0);
+
+          if (imgLoop && easeAlpha > 0.001) {
+            ctx.globalAlpha = easeAlpha;
+            ctx.drawImage(imgLoop, 0, 0, w, h);
+            ctx.globalAlpha = 1.0;
+          }
+        }
+      }
+
+      function render() {
+        if (!isDragging && !isTouching) {
+          targetPosition += BASE_SPEED;
+        }
+
+        const diff = targetPosition - currentPosition;
+        currentPosition += diff * LERP_FACTOR;
+
+        if (currentPosition > TOTAL_FRAMES * 50) {
+          const cycles = Math.floor(currentPosition / TOTAL_FRAMES);
+          currentPosition -= cycles * TOTAL_FRAMES;
+          targetPosition -= cycles * TOTAL_FRAMES;
+        } else if (currentPosition < -TOTAL_FRAMES * 50) {
+          const cycles = Math.floor(currentPosition / TOTAL_FRAMES);
+          currentPosition -= cycles * TOTAL_FRAMES;
+          targetPosition -= cycles * TOTAL_FRAMES;
+        }
+
+        const normPos = ((currentPosition % TOTAL_FRAMES) + TOTAL_FRAMES) % TOTAL_FRAMES;
+        draw(normPos);
+
+        requestAnimationFrame(render);
+      }
+
+      window.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        let delta = e.deltaY;
+        if (e.deltaMode === 1) delta *= 25;
+        else if (e.deltaMode === 2) delta *= 100;
+        targetPosition += delta * SCROLL_SENSITIVITY;
+      }, { passive: false });
+
+      window.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        isDragging = true;
+        lastDragY = e.clientY;
+        lastDragTime = performance.now();
+        dragVelocity = 0;
+      });
+
+      window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const now = performance.now();
+        const deltaY = lastDragY - e.clientY;
+        const dt = Math.max(1, now - lastDragTime);
+
+        targetPosition += deltaY * DRAG_SENSITIVITY;
+        dragVelocity = (deltaY / dt) * 16;
+
+        lastDragY = e.clientY;
+        lastDragTime = now;
+      });
+
+      const finishDrag = () => {
+        if (isDragging) {
+          isDragging = false;
+          targetPosition += dragVelocity * DRAG_SENSITIVITY;
+          dragVelocity = 0;
+        }
+      };
+      window.addEventListener('mouseup', finishDrag);
+      window.addEventListener('mouseleave', finishDrag);
+
+      window.addEventListener('touchstart', (e) => {
+        if (e.touches.length === 1) {
+          isTouching = true;
+          lastTouchY = e.touches[0].clientY;
+          lastTouchTime = performance.now();
+          touchVelocity = 0;
+        }
+      }, { passive: true });
+
+      window.addEventListener('touchmove', (e) => {
+        if (!isTouching || e.touches.length !== 1) return;
+        const now = performance.now();
+        const currentY = e.touches[0].clientY;
+        const deltaY = lastTouchY - currentY;
+        const dt = Math.max(1, now - lastTouchTime);
+
+        targetPosition += deltaY * TOUCH_SENSITIVITY;
+        touchVelocity = (deltaY / dt) * 16;
+
+        lastTouchY = currentY;
+        lastTouchTime = now;
+      }, { passive: true });
+
+      const finishTouch = () => {
+        if (isTouching) {
+          isTouching = false;
+          targetPosition += touchVelocity * TOUCH_SENSITIVITY;
+          touchVelocity = 0;
+        }
+      };
+      window.addEventListener('touchend', finishTouch, { passive: true });
+      window.addEventListener('touchcancel', finishTouch, { passive: true });
+
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+          e.preventDefault();
+          targetPosition += 15;
+        } else if (e.key === 'ArrowUp' || e.key === 'PageUp') {
+          e.preventDefault();
+          targetPosition -= 15;
+        }
+      });
+
+      const firstImg = new Image();
+      firstImg.src = getFrameSrc(1);
+      firstImg.onload = () => {
+        if (firstImg.naturalWidth > 0 && firstImg.naturalHeight > 0) {
+          canvas.width = firstImg.naturalWidth;
+          canvas.height = firstImg.naturalHeight;
+          canvas.style.aspectRatio = `${firstImg.naturalWidth} / ${firstImg.naturalHeight}`;
+        }
+        images[0] = firstImg;
+        loadedFrames.add(0);
+        draw(0);
+
+        for (let i = 1; i < TOTAL_FRAMES; i++) {
+          const img = new Image();
+          img.src = getFrameSrc(i + 1);
+          img.onload = () => {
+            images[i] = img;
+            loadedFrames.add(i);
+          };
+          if (img.decode) {
+            img.decode().then(() => {
+              images[i] = img;
+              loadedFrames.add(i);
+            }).catch(() => {});
+          }
+          images[i] = img;
+        }
+      };
+
+      requestAnimationFrame(render);
+    })();
+  </script>
+</body>
+</html>
